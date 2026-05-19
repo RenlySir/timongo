@@ -102,6 +102,24 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "count must be a collection name")
 		}
 		return h.count(ctx, cmd, coll)
+	case "distinct":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "distinct must be a collection name")
+		}
+		return h.distinct(ctx, cmd, coll)
+	case "update":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "update must be a collection name")
+		}
+		return h.update(ctx, cmd, coll)
+	case "delete":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "delete must be a collection name")
+		}
+		return h.delete(ctx, cmd, coll)
 	case "listDatabases":
 		return bson.M{
 			"ok":        float64(1),
@@ -111,6 +129,85 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 	default:
 		return nil, mongoerrors.New(mongoerrors.CodeCommandNotFound, "CommandNotFound", "no such command: %s", name)
 	}
+}
+
+func (h *Handler) distinct(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	key, err := requiredString(cmd, "key")
+	if err != nil {
+		return nil, err
+	}
+	filter := bson.M{}
+	if raw, ok := cmd["query"]; ok {
+		filter, ok = raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "query has invalid type %T", raw)
+		}
+	}
+	res, err := h.store.Distinct(ctx, db, coll, backend.DistinctRequest{Key: key, Filter: filter})
+	if err != nil {
+		return nil, err
+	}
+	return bson.M{"ok": float64(1), "values": res.Values}, nil
+}
+
+func (h *Handler) update(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	rawUpdates, ok := cmd["updates"].(bson.A)
+	if !ok {
+		return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "updates must be an array")
+	}
+	updates := make([]backend.UpdateModel, 0, len(rawUpdates))
+	for _, raw := range rawUpdates {
+		doc, ok := raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "update item has invalid type %T", raw)
+		}
+		filter, _ := doc["q"].(bson.M)
+		updateDoc, _ := doc["u"].(bson.M)
+		updates = append(updates, backend.UpdateModel{
+			Filter: filter,
+			Update: updateDoc,
+			Multi:  truthy(doc["multi"]),
+			Upsert: truthy(doc["upsert"]),
+		})
+	}
+	res, err := h.store.Update(ctx, db, coll, backend.UpdateRequest{Updates: updates})
+	if err != nil {
+		return nil, err
+	}
+	return bson.M{"ok": float64(1), "n": res.Matched, "nModified": res.Modified, "upserted": toBSONArray(res.Upserted)}, nil
+}
+
+func (h *Handler) delete(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	rawDeletes, ok := cmd["deletes"].(bson.A)
+	if !ok {
+		return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "deletes must be an array")
+	}
+	deletes := make([]backend.DeleteModel, 0, len(rawDeletes))
+	for _, raw := range rawDeletes {
+		doc, ok := raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "delete item has invalid type %T", raw)
+		}
+		filter, _ := doc["q"].(bson.M)
+		deletes = append(deletes, backend.DeleteModel{Filter: filter, Limit: int64Value(doc["limit"])})
+	}
+	res, err := h.store.Delete(ctx, db, coll, backend.DeleteRequest{Deletes: deletes})
+	if err != nil {
+		return nil, err
+	}
+	return bson.M{"ok": float64(1), "n": res.Deleted}, nil
 }
 
 func (h *Handler) createCollection(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
@@ -331,6 +428,34 @@ func (h *Handler) listIndexes(ctx context.Context, cmd bson.M, coll string) (bso
 			"firstBatch": batch,
 		},
 	}, nil
+}
+
+func toBSONArray(docs []bson.M) bson.A {
+	res := make(bson.A, 0, len(docs))
+	for _, doc := range docs {
+		res = append(res, doc)
+	}
+	return res
+}
+
+func truthy(v any) bool {
+	b, _ := v.(bool)
+	return b
+}
+
+func int64Value(v any) int64 {
+	switch n := v.(type) {
+	case int32:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	default:
+		return 0
+	}
 }
 
 func requiredString(cmd bson.M, key string) (string, error) {

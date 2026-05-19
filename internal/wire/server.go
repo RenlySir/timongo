@@ -119,7 +119,7 @@ func HandleOpMsg(ctx context.Context, h *handler.Handler, msg *ferretwire.OpMsg)
 		if err != nil {
 			return nil, err
 		}
-		cmd["documents"] = docs
+		cmd[sequenceFieldName(cmd)] = docs
 	}
 
 	res, err := h.Handle(ctx, cmd)
@@ -151,6 +151,19 @@ func rawSequenceToBSONArray(seq []byte) (bson.A, error) {
 	}
 
 	return docs, nil
+}
+
+func sequenceFieldName(cmd bson.M) string {
+	if _, ok := cmd["insert"]; ok {
+		return "documents"
+	}
+	if _, ok := cmd["update"]; ok {
+		return "updates"
+	}
+	if _, ok := cmd["delete"]; ok {
+		return "deletes"
+	}
+	return "documents"
 }
 
 // HandleOpQuery dispatches one legacy OP_QUERY request to a command handler.

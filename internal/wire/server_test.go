@@ -118,3 +118,23 @@ func TestHandleOpMsgInsertWithDocumentSequence(t *testing.T) {
 		t.Fatalf("ok = %v, want 1", doc.Get("ok"))
 	}
 }
+
+func TestSequenceFieldNameUsesCommandSpecificField(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  bson.M
+		want string
+	}{
+		{name: "insert", cmd: bson.M{"insert": "users"}, want: "documents"},
+		{name: "update", cmd: bson.M{"update": "users"}, want: "updates"},
+		{name: "delete", cmd: bson.M{"delete": "users"}, want: "deletes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sequenceFieldName(tt.cmd); got != tt.want {
+				t.Fatalf("sequenceFieldName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

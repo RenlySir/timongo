@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -205,6 +207,110 @@ func (s *Store) Count(ctx context.Context, dbName, collection string, req backen
 	return backend.CountResult{Count: int64(len(find.Documents))}, nil
 }
 
+// Distinct returns unique scalar values for one field.
+func (s *Store) Distinct(ctx context.Context, dbName, collection string, req backend.DistinctRequest) (backend.DistinctResult, error) {
+	find, err := s.Find(ctx, dbName, collection, backend.FindRequest{Filter: req.Filter})
+	if err != nil {
+		return backend.DistinctResult{}, err
+	}
+	seen := map[any]struct{}{}
+	values := bson.A{}
+	for _, doc := range find.Documents {
+		value, ok := doc[req.Key]
+		if !ok {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return backend.DistinctResult{Values: values}, nil
+}
+
+// Update applies a small MongoDB update subset using read-modify-write.
+func (s *Store) Update(ctx context.Context, dbName, collection string, req backend.UpdateRequest) (backend.UpdateResult, error) {
+	table := PhysicalTableName(dbName, collection)
+	if err := s.CreateCollection(ctx, dbName, collection, backend.CreateCollectionOptions{}); err != nil {
+		return backend.UpdateResult{}, err
+	}
+
+	docs, err := s.Find(ctx, dbName, collection, backend.FindRequest{})
+	if err != nil {
+		return backend.UpdateResult{}, err
+	}
+
+	var result backend.UpdateResult
+	for _, op := range req.Updates {
+		matchedForOp := int64(0)
+		for _, doc := range docs.Documents {
+			if !matchesFilter(doc, op.Filter) {
+				continue
+			}
+			matchedForOp++
+			result.Matched++
+			next := cloneDoc(doc)
+			if err := applyUpdate(next, op.Update); err != nil {
+				return backend.UpdateResult{}, err
+			}
+			if err := s.replaceDocument(ctx, table, next); err != nil {
+				return backend.UpdateResult{}, err
+			}
+			result.Modified++
+			if !op.Multi {
+				break
+			}
+		}
+		if matchedForOp == 0 && op.Upsert {
+			doc := cloneDoc(op.Filter)
+			if err := applyUpdate(doc, op.Update); err != nil {
+				return backend.UpdateResult{}, err
+			}
+			if _, ok := doc["_id"]; !ok {
+				doc["_id"] = fmt.Sprintf("upsert-%d", time.Now().UnixNano())
+			}
+			if err := s.replaceDocument(ctx, table, doc); err != nil {
+				return backend.UpdateResult{}, err
+			}
+			result.Matched++
+			result.Modified++
+			result.Upserted = append(result.Upserted, bson.M{"index": int32(0), "_id": doc["_id"]})
+		}
+	}
+	return result, nil
+}
+
+// Delete deletes matching documents.
+func (s *Store) Delete(ctx context.Context, dbName, collection string, req backend.DeleteRequest) (backend.DeleteResult, error) {
+	table := PhysicalTableName(dbName, collection)
+	find, err := s.Find(ctx, dbName, collection, backend.FindRequest{})
+	if err != nil {
+		return backend.DeleteResult{}, err
+	}
+
+	var deleted int64
+	for _, op := range req.Deletes {
+		for _, doc := range find.Documents {
+			if !matchesFilter(doc, op.Filter) {
+				continue
+			}
+			key, err := bsonutil.DocumentIDKey(doc)
+			if err != nil {
+				return backend.DeleteResult{}, err
+			}
+			if _, err = s.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM `%s` WHERE `id_key` = ?", table), key); err != nil {
+				return backend.DeleteResult{}, err
+			}
+			deleted++
+			if op.Limit == 1 {
+				break
+			}
+		}
+	}
+	return backend.DeleteResult{Deleted: deleted}, nil
+}
+
 // CreateIndexes stores index metadata.
 func (s *Store) CreateIndexes(ctx context.Context, dbName, collection string, indexes []backend.IndexModel) (backend.CreateIndexesResult, error) {
 	if err := s.CreateCollection(ctx, dbName, collection, backend.CreateCollectionOptions{}); err != nil {
@@ -239,6 +345,23 @@ func (s *Store) CreateIndexes(ctx context.Context, dbName, collection string, in
 		names = append(names, name)
 	}
 	return backend.CreateIndexesResult{Names: names}, nil
+}
+
+func (s *Store) replaceDocument(ctx context.Context, table string, doc bson.M) error {
+	key, err := bsonutil.DocumentIDKey(doc)
+	if err != nil {
+		return err
+	}
+	raw, err := bsonutil.MarshalExtJSON(doc)
+	if err != nil {
+		return err
+	}
+	stmt := fmt.Sprintf(
+		"REPLACE INTO `%s` (`id_key`, `id_bson`, `doc_bson`, `doc_json`, `revision`) VALUES (?, ?, ?, CAST(? AS JSON), 1)",
+		table,
+	)
+	_, err = s.db.ExecContext(ctx, stmt, key, key, raw, string(raw))
+	return err
 }
 
 // ListIndexes returns stored index metadata.
@@ -331,6 +454,99 @@ func (s *Store) collectionID(ctx context.Context, dbName, collection string) (in
 		[]byte(dbName), []byte(collection),
 	).Scan(&id)
 	return id, err
+}
+
+func cloneDoc(doc bson.M) bson.M {
+	res := make(bson.M, len(doc))
+	for k, v := range doc {
+		res[k] = v
+	}
+	return res
+}
+
+func matchesFilter(doc bson.M, filter bson.M) bool {
+	for key, want := range filter {
+		got, ok := doc[key]
+		if !ok {
+			return false
+		}
+		if !reflect.DeepEqual(got, want) {
+			return false
+		}
+	}
+	return true
+}
+
+func applyUpdate(doc bson.M, update bson.M) error {
+	if len(update) == 0 {
+		return nil
+	}
+	operatorStyle := false
+	for key := range update {
+		if len(key) > 0 && key[0] == '$' {
+			operatorStyle = true
+			break
+		}
+	}
+	if !operatorStyle {
+		for key := range doc {
+			delete(doc, key)
+		}
+		for key, value := range update {
+			doc[key] = value
+		}
+		return nil
+	}
+	for op, raw := range update {
+		body, _ := raw.(bson.M)
+		switch op {
+		case "$set":
+			for key, value := range body {
+				doc[key] = value
+			}
+		case "$inc":
+			for key, value := range body {
+				doc[key] = addNumbers(doc[key], value)
+			}
+		case "$unset":
+			for key := range body {
+				delete(doc, key)
+			}
+		default:
+			return fmt.Errorf("unsupported update operator %s", op)
+		}
+	}
+	return nil
+}
+
+func addNumbers(left any, right any) any {
+	switch l := left.(type) {
+	case int32:
+		return l + toInt32(right)
+	case int64:
+		return l + int64(toInt32(right))
+	case int:
+		return l + int(toInt32(right))
+	case float64:
+		return l + float64(toInt32(right))
+	default:
+		return toInt32(right)
+	}
+}
+
+func toInt32(v any) int32 {
+	switch n := v.(type) {
+	case int32:
+		return n
+	case int64:
+		return int32(n)
+	case int:
+		return int32(n)
+	case float64:
+		return int32(n)
+	default:
+		return 0
+	}
 }
 
 // BuildFindSQL builds SQL for the supported find subset.

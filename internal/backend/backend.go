@@ -14,6 +14,9 @@ type Store interface {
 	Insert(ctx context.Context, db, collection string, docs []bson.M) (InsertResult, error)
 	Find(ctx context.Context, db, collection string, req FindRequest) (FindResult, error)
 	Count(ctx context.Context, db, collection string, req CountRequest) (CountResult, error)
+	Distinct(ctx context.Context, db, collection string, req DistinctRequest) (DistinctResult, error)
+	Update(ctx context.Context, db, collection string, req UpdateRequest) (UpdateResult, error)
+	Delete(ctx context.Context, db, collection string, req DeleteRequest) (DeleteResult, error)
 	CreateIndexes(ctx context.Context, db, collection string, indexes []IndexModel) (CreateIndexesResult, error)
 	ListIndexes(ctx context.Context, db, collection string) (ListIndexesResult, error)
 	DropDatabase(ctx context.Context, db string) error
@@ -59,6 +62,53 @@ type CountRequest struct {
 // CountResult describes a count command result.
 type CountResult struct {
 	Count int64
+}
+
+// DistinctRequest describes a distinct command.
+type DistinctRequest struct {
+	Key    string
+	Filter bson.M
+}
+
+// DistinctResult describes distinct values.
+type DistinctResult struct {
+	Values bson.A
+}
+
+// UpdateRequest describes an update command.
+type UpdateRequest struct {
+	Updates []UpdateModel
+}
+
+// UpdateModel describes one update operation.
+type UpdateModel struct {
+	Filter bson.M
+	Update bson.M
+	Multi  bool
+	Upsert bool
+}
+
+// UpdateResult describes update results.
+type UpdateResult struct {
+	Matched  int64
+	Modified int64
+	Upserted []bson.M
+}
+
+// DeleteRequest describes a delete command.
+type DeleteRequest struct {
+	Deletes []DeleteModel
+}
+
+// DeleteModel describes one delete operation.
+type DeleteModel struct {
+	Filter bson.M
+	Limit  int64
+}
+
+// DeleteResult describes delete results.
+type DeleteResult struct {
+	Deleted int64
 }
 
 // IndexModel describes one MongoDB index definition.

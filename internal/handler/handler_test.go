@@ -164,6 +164,62 @@ func TestHandleCountAndDropCollection(t *testing.T) {
 	}
 }
 
+func TestHandleUpdateDeleteAndDistinct(t *testing.T) {
+	h := New(memory.NewStore())
+	ctx := context.Background()
+
+	if _, err := h.Handle(ctx, bson.M{
+		"insert": "users",
+		"$db":    "app",
+		"documents": bson.A{
+			bson.M{"_id": int32(1), "name": "Ada", "visits": int32(1), "region": "cn"},
+			bson.M{"_id": int32(2), "name": "Grace", "visits": int32(3), "region": "us"},
+		},
+	}); err != nil {
+		t.Fatalf("insert returned error: %v", err)
+	}
+
+	update, err := h.Handle(ctx, bson.M{
+		"update": "users",
+		"$db":    "app",
+		"updates": bson.A{
+			bson.M{
+				"q": bson.M{"name": "Ada"},
+				"u": bson.M{"$set": bson.M{"region": "eu"}, "$inc": bson.M{"visits": int32(2)}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("update returned error: %v", err)
+	}
+	if update["n"] != int64(1) {
+		t.Fatalf("update n = %v, want 1", update["n"])
+	}
+
+	distinct, err := h.Handle(ctx, bson.M{"distinct": "users", "$db": "app", "key": "region"})
+	if err != nil {
+		t.Fatalf("distinct returned error: %v", err)
+	}
+	values := distinct["values"].(bson.A)
+	if len(values) != 2 {
+		t.Fatalf("len(values) = %d, want 2", len(values))
+	}
+
+	del, err := h.Handle(ctx, bson.M{
+		"delete": "users",
+		"$db":    "app",
+		"deletes": bson.A{
+			bson.M{"q": bson.M{"name": "Grace"}, "limit": int32(1)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("delete returned error: %v", err)
+	}
+	if del["n"] != int64(1) {
+		t.Fatalf("delete n = %v, want 1", del["n"])
+	}
+}
+
 func TestHandleUnknownCommandReturnsCommandError(t *testing.T) {
 	h := New(memory.NewStore())
 
