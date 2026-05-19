@@ -1,0 +1,14 @@
+[Unit]
+Description=timongo-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ .User }}
+ExecStart={{ .DeployDir }}/bin/timongo serve -config {{ .DeployDir }}/conf/timongo.toml
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

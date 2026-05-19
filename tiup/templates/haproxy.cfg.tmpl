@@ -1,0 +1,11 @@
+frontend timongo_mongo
+    bind *:{{ .Port }}
+    mode tcp
+    default_backend timongo_servers
+
+backend timongo_servers
+    mode tcp
+    balance {{ .Balance }}
+{{ range .Backends }}
+    server {{ .Name }} {{ .Host }}:{{ .Port }} check port {{ .StatusPort }}
+{{ end }}

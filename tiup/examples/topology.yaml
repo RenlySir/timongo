@@ -1,0 +1,28 @@
+global:
+  user: tidb
+  deploy_dir: /tidb-deploy
+  data_dir: /tidb-data
+
+timongo_servers:
+  - host: 10.0.1.10
+    port: 27017
+    status_port: 28017
+    deploy_dir: /tidb-deploy/timongo-27017
+    log_dir: /tidb-deploy/timongo-27017/log
+    tidb_host: 10.0.1.20
+    tidb_port: 4000
+    config:
+      compat_version: "6.0"
+      stateless: true
+      cursor_ttl: "10m"
+      session_ttl: "30m"
+      transaction_timeout: "60s"
+      max_connections: 20000
+      tidb_max_open_conns: 4096
+
+timongo_lb_servers:
+  - host: 10.0.1.5
+    port: 27017
+    status_port: 28018
+    balance: leastconn
+    backend_role: timongo

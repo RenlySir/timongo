@@ -1,0 +1,18 @@
+[mongo]
+listen_addr = "0.0.0.0:{{ .Port }}"
+compat_version = "{{ .Config.CompatVersion }}"
+
+[status]
+listen_addr = "0.0.0.0:{{ .StatusPort }}"
+
+[tidb]
+host = "{{ .TiDBHost }}"
+port = {{ .TiDBPort }}
+database = "_timongo"
+max_open_conns = {{ .Config.TiDBMaxOpenConns }}
+
+[runtime]
+stateless = true
+cursor_ttl = "{{ .Config.CursorTTL }}"
+session_ttl = "{{ .Config.SessionTTL }}"
+transaction_timeout = "{{ .Config.TransactionTimeout }}"
