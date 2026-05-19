@@ -3,6 +3,20 @@ global:
   deploy_dir: /tidb-deploy
   data_dir: /tidb-data
 
+pd_servers:
+  - host: 10.0.1.30
+
+tidb_servers:
+  - host: 10.0.1.20
+    port: 4000
+    status_port: 10080
+
+tikv_servers:
+  - host: 10.0.1.40
+
+tiflash_servers:
+  - host: 10.0.1.50
+
 timongo_servers:
   - host: 10.0.1.10
     port: 27017

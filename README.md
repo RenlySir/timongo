@@ -35,6 +35,7 @@ Start here:
 - [timongo Feasibility Assessment](docs/timongo-feasibility-report.md)
 - [timongo Product Design](docs/timongo-product-design.md)
 - [MongoDB 6.0 Compatibility Matrix](docs/compatibility/mongodb-6.0-matrix.md)
+- [timongo + TiDB v8.5.6 Packaging](docs/packaging-tidb-v8.5.6.md)
 
 ## Study Focus
 
@@ -94,6 +95,18 @@ Build:
 
 ```bash
 go build ./cmd/timongo
+```
+
+Build a TiDB v8.5.6 offline bundle with timongo:
+
+```bash
+./scripts/package-timongo-tidb.sh
+```
+
+For packaging smoke tests without downloading the multi-GB TiDB mirror:
+
+```bash
+./scripts/package-timongo-tidb.sh --skip-mirror
 ```
 
 Run with TiDB backend:
