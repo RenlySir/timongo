@@ -120,6 +120,12 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "delete must be a collection name")
 		}
 		return h.delete(ctx, cmd, coll)
+	case "aggregate":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "aggregate must be a collection name")
+		}
+		return h.aggregate(ctx, cmd, coll)
 	case "listDatabases":
 		return bson.M{
 			"ok":        float64(1),
@@ -129,6 +135,36 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 	default:
 		return nil, mongoerrors.New(mongoerrors.CodeCommandNotFound, "CommandNotFound", "no such command: %s", name)
 	}
+}
+
+func (h *Handler) aggregate(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	pipeline := bson.A{}
+	if raw, ok := cmd["pipeline"]; ok {
+		pipeline, ok = raw.(bson.A)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "pipeline has invalid type %T", raw)
+		}
+	}
+	res, err := h.store.Aggregate(ctx, db, coll, backend.AggregateRequest{Pipeline: pipeline})
+	if err != nil {
+		return nil, err
+	}
+	batch := make(bson.A, 0, len(res.Documents))
+	for _, doc := range res.Documents {
+		batch = append(batch, doc)
+	}
+	return bson.M{
+		"ok": float64(1),
+		"cursor": bson.M{
+			"id":         int64(0),
+			"ns":         db + "." + coll,
+			"firstBatch": batch,
+		},
+	}, nil
 }
 
 func (h *Handler) distinct(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {

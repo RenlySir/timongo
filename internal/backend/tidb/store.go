@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -311,6 +312,19 @@ func (s *Store) Delete(ctx context.Context, dbName, collection string, req backe
 	return backend.DeleteResult{Deleted: deleted}, nil
 }
 
+// Aggregate executes a small pipeline subset.
+func (s *Store) Aggregate(ctx context.Context, dbName, collection string, req backend.AggregateRequest) (backend.AggregateResult, error) {
+	find, err := s.Find(ctx, dbName, collection, backend.FindRequest{})
+	if err != nil {
+		return backend.AggregateResult{}, err
+	}
+	docs, err := applyPipeline(find.Documents, req.Pipeline)
+	if err != nil {
+		return backend.AggregateResult{}, err
+	}
+	return backend.AggregateResult{Documents: docs}, nil
+}
+
 // CreateIndexes stores index metadata.
 func (s *Store) CreateIndexes(ctx context.Context, dbName, collection string, indexes []backend.IndexModel) (backend.CreateIndexesResult, error) {
 	if err := s.CreateCollection(ctx, dbName, collection, backend.CreateCollectionOptions{}); err != nil {
@@ -547,6 +561,91 @@ func toInt32(v any) int32 {
 	default:
 		return 0
 	}
+}
+
+func applyPipeline(input []bson.M, pipeline bson.A) ([]bson.M, error) {
+	docs := make([]bson.M, 0, len(input))
+	for _, doc := range input {
+		docs = append(docs, cloneDoc(doc))
+	}
+	for _, rawStage := range pipeline {
+		stage, ok := rawStage.(bson.M)
+		if !ok {
+			return nil, fmt.Errorf("aggregation stage has invalid type %T", rawStage)
+		}
+		for op, raw := range stage {
+			switch op {
+			case "$match":
+				filter, _ := raw.(bson.M)
+				filtered := docs[:0]
+				for _, doc := range docs {
+					if matchesFilter(doc, filter) {
+						filtered = append(filtered, doc)
+					}
+				}
+				docs = filtered
+			case "$limit":
+				n := int(toInt32(raw))
+				if n < len(docs) {
+					docs = docs[:n]
+				}
+			case "$skip":
+				n := int(toInt32(raw))
+				if n >= len(docs) {
+					docs = nil
+				} else {
+					docs = docs[n:]
+				}
+			case "$sort":
+				spec, _ := raw.(bson.M)
+				for field, dir := range spec {
+					desc := toInt32(dir) < 0
+					sort.SliceStable(docs, func(i, j int) bool {
+						less := fmt.Sprint(docs[i][field]) < fmt.Sprint(docs[j][field])
+						if desc {
+							return !less
+						}
+						return less
+					})
+					break
+				}
+			case "$project":
+				spec, _ := raw.(bson.M)
+				projected := make([]bson.M, 0, len(docs))
+				for _, doc := range docs {
+					next := bson.M{}
+					includeID := true
+					for field, include := range spec {
+						if field == "_id" && toInt32(include) == 0 {
+							includeID = false
+							continue
+						}
+						if toInt32(include) != 0 {
+							if value, ok := doc[field]; ok {
+								next[field] = value
+							}
+						}
+					}
+					if includeID {
+						if value, ok := doc["_id"]; ok {
+							next["_id"] = value
+						}
+					}
+					projected = append(projected, next)
+				}
+				docs = projected
+			case "$count":
+				name, _ := raw.(string)
+				if name == "" {
+					name = "count"
+				}
+				docs = []bson.M{{name: int64(len(docs))}}
+			default:
+				return nil, fmt.Errorf("unsupported aggregation stage %s", op)
+			}
+		}
+	}
+	return docs, nil
 }
 
 // BuildFindSQL builds SQL for the supported find subset.

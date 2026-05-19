@@ -220,6 +220,58 @@ func TestHandleUpdateDeleteAndDistinct(t *testing.T) {
 	}
 }
 
+func TestHandleAggregateMatchLimitAndCount(t *testing.T) {
+	h := New(memory.NewStore())
+	ctx := context.Background()
+
+	if _, err := h.Handle(ctx, bson.M{
+		"insert": "orders",
+		"$db":    "app",
+		"documents": bson.A{
+			bson.M{"_id": int32(1), "status": "paid", "total": int32(10)},
+			bson.M{"_id": int32(2), "status": "new", "total": int32(20)},
+			bson.M{"_id": int32(3), "status": "paid", "total": int32(30)},
+		},
+	}); err != nil {
+		t.Fatalf("insert returned error: %v", err)
+	}
+
+	res, err := h.Handle(ctx, bson.M{
+		"aggregate": "orders",
+		"$db":       "app",
+		"pipeline": bson.A{
+			bson.M{"$match": bson.M{"status": "paid"}},
+			bson.M{"$limit": int32(1)},
+		},
+		"cursor": bson.M{},
+	})
+	if err != nil {
+		t.Fatalf("aggregate returned error: %v", err)
+	}
+	cursor := res["cursor"].(bson.M)
+	batch := cursor["firstBatch"].(bson.A)
+	if len(batch) != 1 {
+		t.Fatalf("len(firstBatch) = %d, want 1", len(batch))
+	}
+
+	count, err := h.Handle(ctx, bson.M{
+		"aggregate": "orders",
+		"$db":       "app",
+		"pipeline": bson.A{
+			bson.M{"$match": bson.M{"status": "paid"}},
+			bson.M{"$count": "count"},
+		},
+		"cursor": bson.M{},
+	})
+	if err != nil {
+		t.Fatalf("aggregate count returned error: %v", err)
+	}
+	countBatch := count["cursor"].(bson.M)["firstBatch"].(bson.A)
+	if countBatch[0].(bson.M)["count"] != int64(2) {
+		t.Fatalf("count doc = %#v, want count 2", countBatch[0])
+	}
+}
+
 func TestHandleUnknownCommandReturnsCommandError(t *testing.T) {
 	h := New(memory.NewStore())
 

@@ -17,6 +17,7 @@ type Store interface {
 	Distinct(ctx context.Context, db, collection string, req DistinctRequest) (DistinctResult, error)
 	Update(ctx context.Context, db, collection string, req UpdateRequest) (UpdateResult, error)
 	Delete(ctx context.Context, db, collection string, req DeleteRequest) (DeleteResult, error)
+	Aggregate(ctx context.Context, db, collection string, req AggregateRequest) (AggregateResult, error)
 	CreateIndexes(ctx context.Context, db, collection string, indexes []IndexModel) (CreateIndexesResult, error)
 	ListIndexes(ctx context.Context, db, collection string) (ListIndexesResult, error)
 	DropDatabase(ctx context.Context, db string) error
@@ -109,6 +110,16 @@ type DeleteModel struct {
 // DeleteResult describes delete results.
 type DeleteResult struct {
 	Deleted int64
+}
+
+// AggregateRequest describes a small aggregation subset.
+type AggregateRequest struct {
+	Pipeline bson.A
+}
+
+// AggregateResult describes aggregate output.
+type AggregateResult struct {
+	Documents []bson.M
 }
 
 // IndexModel describes one MongoDB index definition.
