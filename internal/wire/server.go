@@ -105,12 +105,7 @@ func HandleOpMsg(ctx context.Context, h *handler.Handler, msg *ferretwire.OpMsg)
 	if err != nil {
 		return nil, err
 	}
-	doc, err := spec.DecodeDeep()
-	if err != nil {
-		return nil, err
-	}
-
-	cmd, err := WireDocToBSONMap(doc)
+	cmd, err := rawDocumentToBSONMap(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -138,11 +133,7 @@ func rawSequenceToBSONArray(seq []byte) (bson.A, error) {
 			return nil, err
 		}
 		raw := wirebson.RawDocument(seq[:size])
-		doc, err := raw.DecodeDeep()
-		if err != nil {
-			return nil, err
-		}
-		m, err := WireDocToBSONMap(doc)
+		m, err := rawDocumentToBSONMap(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -194,6 +185,14 @@ func WireDocToBSONMap(doc *wirebson.Document) (bson.M, error) {
 	}
 
 	return normalizeDriverDoc(converted)
+}
+
+func rawDocumentToBSONMap(raw wirebson.RawDocument) (bson.M, error) {
+	var doc bson.M
+	if err := bson.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	return normalizeDriverDoc(doc)
 }
 
 func responseOpMsg(doc bson.M) (*ferretwire.OpMsg, error) {
@@ -288,6 +287,16 @@ func normalizeDriverValue(v any) (any, error) {
 	case bson.D:
 		return normalizeDriverDoc(value)
 	case bson.A:
+		res := make(bson.A, 0, len(value))
+		for _, item := range value {
+			normalized, err := normalizeDriverValue(item)
+			if err != nil {
+				return nil, err
+			}
+			res = append(res, normalized)
+		}
+		return res, nil
+	case []any:
 		res := make(bson.A, 0, len(value))
 		for _, item := range value {
 			normalized, err := normalizeDriverValue(item)

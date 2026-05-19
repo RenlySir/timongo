@@ -46,8 +46,11 @@ type InsertResult struct {
 
 // FindRequest describes the supported M0 find subset.
 type FindRequest struct {
-	Filter bson.M
-	Limit  int64
+	Filter     bson.M
+	Projection bson.M
+	Sort       bson.M
+	Skip       int64
+	Limit      int64
 }
 
 // FindResult describes a find command result.

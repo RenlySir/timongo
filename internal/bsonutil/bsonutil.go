@@ -52,5 +52,37 @@ func UnmarshalExtJSON(raw []byte) (bson.M, error) {
 		return nil, err
 	}
 
-	return doc, nil
+	normalized, _ := normalizeValue(doc).(bson.M)
+	return normalized, nil
+}
+
+func normalizeValue(v any) any {
+	switch value := v.(type) {
+	case bson.D:
+		res := make(bson.M, len(value))
+		for _, elem := range value {
+			res[elem.Key] = normalizeValue(elem.Value)
+		}
+		return res
+	case bson.M:
+		res := make(bson.M, len(value))
+		for key, item := range value {
+			res[key] = normalizeValue(item)
+		}
+		return res
+	case bson.A:
+		res := make(bson.A, 0, len(value))
+		for _, item := range value {
+			res = append(res, normalizeValue(item))
+		}
+		return res
+	case []any:
+		res := make(bson.A, 0, len(value))
+		for _, item := range value {
+			res = append(res, normalizeValue(item))
+		}
+		return res
+	default:
+		return value
+	}
 }

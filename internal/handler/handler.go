@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strings"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -49,6 +50,38 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 		}, nil
 	case "serverStatus":
 		return bson.M{"ok": float64(1), "version": "0.1.0", "timongo": bson.M{"compatVersion": "6.0"}}, nil
+	case "connectionStatus":
+		return bson.M{"ok": float64(1), "authInfo": bson.M{"authenticatedUsers": bson.A{}, "authenticatedUserRoles": bson.A{}}}, nil
+	case "dbStats":
+		return bson.M{"ok": float64(1), "db": cmd["$db"], "collections": int32(0), "objects": int32(0), "dataSize": int64(0), "storageSize": int64(0), "indexes": int32(0), "indexSize": int64(0)}, nil
+	case "collStats":
+		return bson.M{"ok": float64(1), "ns": stringValue(cmd["$db"]) + "." + stringValue(value), "count": int64(0), "size": int64(0), "storageSize": int64(0), "nindexes": int32(1)}, nil
+	case "hostInfo":
+		return bson.M{"ok": float64(1), "system": bson.M{"hostname": "timongo", "cpuAddrSize": int32(64)}, "os": bson.M{"type": "unknown"}}, nil
+	case "getCmdLineOpts":
+		return bson.M{"ok": float64(1), "argv": bson.A{}, "parsed": bson.M{}}, nil
+	case "getParameter":
+		return bson.M{"ok": float64(1), "featureCompatibilityVersion": bson.M{"version": "6.0"}}, nil
+	case "currentOp":
+		return bson.M{"ok": float64(1), "inprog": bson.A{}}, nil
+	case "top":
+		return bson.M{"ok": float64(1), "totals": bson.M{}}, nil
+	case "profile":
+		return bson.M{"ok": float64(1), "was": int32(0)}, nil
+	case "listCommands":
+		return bson.M{"ok": float64(1), "commands": bson.M{}}, nil
+	case "usersInfo":
+		return bson.M{"ok": float64(1), "users": bson.A{}}, nil
+	case "rolesInfo":
+		return bson.M{"ok": float64(1), "roles": bson.A{}}, nil
+	case "getDefaultRWConcern":
+		return bson.M{"ok": float64(1), "defaultReadConcern": bson.M{}, "defaultWriteConcern": bson.M{}}, nil
+	case "validate":
+		return bson.M{"ok": float64(1), "valid": true, "ns": stringValue(cmd["$db"]) + "." + stringValue(value)}, nil
+	case "planCacheClear":
+		return bson.M{"ok": float64(1)}, nil
+	case "explain":
+		return bson.M{"ok": float64(1), "queryPlanner": bson.M{"namespace": stringValue(cmd["$db"]), "winningPlan": bson.M{"stage": "TIMONGO_SCAN"}}}, nil
 	case "create":
 		coll, ok := value.(string)
 		if !ok || coll == "" {
@@ -84,6 +117,12 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "listIndexes must be a collection name")
 		}
 		return h.listIndexes(ctx, cmd, coll)
+	case "dropIndexes":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "dropIndexes must be a collection name")
+		}
+		return bson.M{"ok": float64(1), "nIndexesWas": int32(1)}, nil
 	case "insert":
 		coll, ok := value.(string)
 		if !ok || coll == "" {
@@ -108,6 +147,12 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "distinct must be a collection name")
 		}
 		return h.distinct(ctx, cmd, coll)
+	case "findAndModify":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "findAndModify must be a collection name")
+		}
+		return h.findAndModify(ctx, cmd, coll)
 	case "update":
 		coll, ok := value.(string)
 		if !ok || coll == "" {
@@ -126,6 +171,10 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "aggregate must be a collection name")
 		}
 		return h.aggregate(ctx, cmd, coll)
+	case "renameCollection":
+		return h.renameCollection(ctx, cmd, stringValue(value))
+	case "collMod":
+		return bson.M{"ok": float64(1)}, nil
 	case "listDatabases":
 		return bson.M{
 			"ok":        float64(1),
@@ -188,6 +237,55 @@ func (h *Handler) distinct(ctx context.Context, cmd bson.M, coll string) (bson.M
 		return nil, err
 	}
 	return bson.M{"ok": float64(1), "values": res.Values}, nil
+}
+
+func (h *Handler) findAndModify(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	query, _ := cmd["query"].(bson.M)
+	find, err := h.store.Find(ctx, db, coll, backend.FindRequest{Filter: query, Limit: 1})
+	if err != nil {
+		return nil, err
+	}
+	var before bson.M
+	if len(find.Documents) > 0 {
+		before = find.Documents[0]
+	}
+	if truthy(cmd["remove"]) {
+		if before != nil {
+			_, err = h.store.Delete(ctx, db, coll, backend.DeleteRequest{Deletes: []backend.DeleteModel{{Filter: query, Limit: 1}}})
+			if err != nil {
+				return nil, err
+			}
+		}
+		return bson.M{"ok": float64(1), "lastErrorObject": bson.M{"n": int32(len(find.Documents))}, "value": before}, nil
+	}
+
+	updateDoc, _ := cmd["update"].(bson.M)
+	upsert := truthy(cmd["upsert"])
+	if len(updateDoc) > 0 {
+		_, err = h.store.Update(ctx, db, coll, backend.UpdateRequest{Updates: []backend.UpdateModel{{
+			Filter: query,
+			Update: updateDoc,
+			Upsert: upsert,
+		}}})
+		if err != nil {
+			return nil, err
+		}
+	}
+	value := before
+	if truthy(cmd["new"]) || truthy(cmd["returnNewDocument"]) {
+		after, err := h.store.Find(ctx, db, coll, backend.FindRequest{Filter: query, Limit: 1})
+		if err != nil {
+			return nil, err
+		}
+		if len(after.Documents) > 0 {
+			value = after.Documents[0]
+		}
+	}
+	return bson.M{"ok": float64(1), "lastErrorObject": bson.M{"n": int32(len(find.Documents)), "updatedExisting": before != nil}, "value": value}, nil
 }
 
 func (h *Handler) update(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
@@ -311,6 +409,36 @@ func (h *Handler) dropCollection(ctx context.Context, cmd bson.M, coll string) (
 	return bson.M{"ok": float64(1), "ns": db + "." + coll}, nil
 }
 
+func (h *Handler) renameCollection(ctx context.Context, cmd bson.M, fromNS string) (bson.M, error) {
+	db, coll := splitNamespace(fromNS, stringValue(cmd["$db"]))
+	toNS, err := requiredString(cmd, "to")
+	if err != nil {
+		return nil, err
+	}
+	toDB, toColl := splitNamespace(toNS, db)
+	find, err := h.store.Find(ctx, db, coll, backend.FindRequest{})
+	if err != nil {
+		return nil, err
+	}
+	if truthy(cmd["dropTarget"]) {
+		if err := h.store.DropCollection(ctx, toDB, toColl); err != nil {
+			return nil, err
+		}
+	}
+	if err := h.store.CreateCollection(ctx, toDB, toColl, backend.CreateCollectionOptions{}); err != nil {
+		return nil, err
+	}
+	if len(find.Documents) > 0 {
+		if _, err := h.store.Insert(ctx, toDB, toColl, find.Documents); err != nil {
+			return nil, err
+		}
+	}
+	if err := h.store.DropCollection(ctx, db, coll); err != nil {
+		return nil, err
+	}
+	return bson.M{"ok": float64(1)}, nil
+}
+
 func (h *Handler) insert(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
 	db, err := requiredString(cmd, "$db")
 	if err != nil {
@@ -365,8 +493,23 @@ func (h *Handler) find(ctx context.Context, cmd bson.M, coll string) (bson.M, er
 	default:
 		return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "limit has invalid type %T", raw)
 	}
+	skip := int64Value(cmd["skip"])
+	projection := bson.M{}
+	if raw, ok := cmd["projection"]; ok {
+		projection, ok = raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "projection has invalid type %T", raw)
+		}
+	}
+	sort := bson.M{}
+	if raw, ok := cmd["sort"]; ok {
+		sort, ok = raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "sort has invalid type %T", raw)
+		}
+	}
 
-	res, err := h.store.Find(ctx, db, coll, backend.FindRequest{Filter: filter, Limit: limit})
+	res, err := h.store.Find(ctx, db, coll, backend.FindRequest{Filter: filter, Projection: projection, Sort: sort, Skip: skip, Limit: limit})
 	if err != nil {
 		return nil, err
 	}
@@ -492,6 +635,18 @@ func int64Value(v any) int64 {
 	default:
 		return 0
 	}
+}
+
+func stringValue(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func splitNamespace(ns string, defaultDB string) (string, string) {
+	if left, right, ok := strings.Cut(ns, "."); ok {
+		return left, right
+	}
+	return defaultDB, ns
 }
 
 func requiredString(cmd bson.M, key string) (string, error) {

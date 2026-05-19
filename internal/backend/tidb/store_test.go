@@ -42,13 +42,31 @@ func TestFindSQLUsesJSONExtractForScalarFilter(t *testing.T) {
 		t.Fatalf("BuildFindSQL returned error: %v", err)
 	}
 
-	wantSQL := "SELECT JSON_PRETTY(doc_json) FROM `tm_doc_app_users` WHERE JSON_UNQUOTE(JSON_EXTRACT(doc_json, ?)) = ?"
+	wantSQL := "SELECT JSON_PRETTY(doc_json) FROM `tm_doc_app_users`"
 	if sql != wantSQL {
 		t.Fatalf("sql = %q, want %q", sql, wantSQL)
 	}
 
-	if args[0] != "$.name" || args[1] != "Ada" {
-		t.Fatalf("args = %#v, want [$.name Ada]", args)
+	if len(args) != 0 {
+		t.Fatalf("args = %#v, want empty args", args)
+	}
+}
+
+func TestFindSQLScansCollectionForPostFilteredComparison(t *testing.T) {
+	sql, args, err := BuildFindSQL("app", "orders", backend.FindRequest{
+		Filter: mapOf("total", mapOf("$gte", int32(20))),
+		Limit:  1,
+	})
+	if err != nil {
+		t.Fatalf("BuildFindSQL returned error: %v", err)
+	}
+
+	wantSQL := "SELECT JSON_PRETTY(doc_json) FROM `tm_doc_app_orders`"
+	if sql != wantSQL {
+		t.Fatalf("sql = %q, want %q", sql, wantSQL)
+	}
+	if len(args) != 0 {
+		t.Fatalf("args = %#v, want empty args", args)
 	}
 }
 

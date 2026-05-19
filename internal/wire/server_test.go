@@ -99,6 +99,32 @@ func TestWireDocumentRoundTripWithArray(t *testing.T) {
 	}
 }
 
+func TestWireRawDocumentSupportsMinAndMaxKey(t *testing.T) {
+	raw, err := bson.Marshal(bson.M{
+		"insert": "types",
+		"$db":    "app",
+		"documents": bson.A{
+			bson.M{"_id": int32(1), "kind": "min", "value": bson.MinKey{}},
+			bson.M{"_id": int32(2), "kind": "max", "value": bson.MaxKey{}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	got, err := rawDocumentToBSONMap(wirebson.RawDocument(raw))
+	if err != nil {
+		t.Fatalf("rawDocumentToBSONMap returned error: %v", err)
+	}
+	docs := got["documents"].(bson.A)
+	if _, ok := docs[0].(bson.M)["value"].(bson.MinKey); !ok {
+		t.Fatalf("first value has type %T, want bson.MinKey", docs[0].(bson.M)["value"])
+	}
+	if _, ok := docs[1].(bson.M)["value"].(bson.MaxKey); !ok {
+		t.Fatalf("second value has type %T, want bson.MaxKey", docs[1].(bson.M)["value"])
+	}
+}
+
 func TestHandleOpMsgInsertWithDocumentSequence(t *testing.T) {
 	h := handler.New(memory.NewStore())
 	req := ferretwire.MustOpMsg("insert", "users", "$db", "app", "documents", wirebson.MustArray(

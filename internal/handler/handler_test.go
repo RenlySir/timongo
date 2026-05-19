@@ -220,6 +220,100 @@ func TestHandleUpdateDeleteAndDistinct(t *testing.T) {
 	}
 }
 
+func TestHandleFindAndModifyUpdateAndRemove(t *testing.T) {
+	h := New(memory.NewStore())
+	ctx := context.Background()
+
+	if _, err := h.Handle(ctx, bson.M{
+		"insert": "customers",
+		"$db":    "app",
+		"documents": bson.A{
+			bson.M{"_id": int32(1), "customerId": int32(999), "tier": "gold"},
+			bson.M{"_id": int32(2), "customerId": int32(1000), "tier": "silver"},
+		},
+	}); err != nil {
+		t.Fatalf("insert returned error: %v", err)
+	}
+
+	updated, err := h.Handle(ctx, bson.M{
+		"findAndModify": "customers",
+		"$db":           "app",
+		"query":         bson.M{"customerId": int32(999)},
+		"update":        bson.M{"$inc": bson.M{"visits": int32(1)}},
+		"new":           true,
+	})
+	if err != nil {
+		t.Fatalf("findAndModify update returned error: %v", err)
+	}
+	value := updated["value"].(bson.M)
+	if value["visits"] != int32(1) {
+		t.Fatalf("value = %#v, want visits 1", value)
+	}
+
+	replaced, err := h.Handle(ctx, bson.M{
+		"findAndModify": "customers",
+		"$db":           "app",
+		"query":         bson.M{"customerId": int32(999)},
+		"update":        bson.M{"$set": bson.M{"tier": "platinum"}},
+		"new":           true,
+	})
+	if err != nil {
+		t.Fatalf("findAndModify set returned error: %v", err)
+	}
+	if replaced["value"].(bson.M)["tier"] != "platinum" {
+		t.Fatalf("value = %#v, want tier platinum", replaced["value"])
+	}
+
+	removed, err := h.Handle(ctx, bson.M{
+		"findAndModify": "customers",
+		"$db":           "app",
+		"query":         bson.M{"customerId": int32(1000)},
+		"remove":        true,
+	})
+	if err != nil {
+		t.Fatalf("findAndModify remove returned error: %v", err)
+	}
+	if removed["value"].(bson.M)["customerId"] != int32(1000) {
+		t.Fatalf("removed = %#v, want customer 1000", removed["value"])
+	}
+}
+
+func TestHandleDropIndexesCollModAndStatsCommands(t *testing.T) {
+	h := New(memory.NewStore())
+	ctx := context.Background()
+
+	if _, err := h.Handle(ctx, bson.M{
+		"createIndexes": "scratch",
+		"$db":           "app",
+		"indexes":       bson.A{bson.M{"name": "dropMe_1", "key": bson.M{"dropMe": int32(1)}}},
+	}); err != nil {
+		t.Fatalf("createIndexes returned error: %v", err)
+	}
+	if _, err := h.Handle(ctx, bson.M{"dropIndexes": "scratch", "$db": "app", "index": "dropMe_1"}); err != nil {
+		t.Fatalf("dropIndexes returned error: %v", err)
+	}
+	if _, err := h.Handle(ctx, bson.M{"collMod": "scratch", "$db": "app", "validator": bson.M{"$jsonSchema": bson.M{"required": bson.A{"name"}}}}); err != nil {
+		t.Fatalf("collMod returned error: %v", err)
+	}
+
+	for _, cmd := range []bson.M{
+		{"connectionStatus": int32(1), "$db": "admin"},
+		{"dbStats": int32(1), "$db": "app"},
+		{"collStats": "scratch", "$db": "app"},
+		{"validate": "scratch", "$db": "app"},
+		{"profile": int32(-1), "$db": "app"},
+		{"planCacheClear": "scratch", "$db": "app"},
+	} {
+		res, err := h.Handle(ctx, cmd)
+		if err != nil {
+			t.Fatalf("Handle(%#v) returned error: %v", cmd, err)
+		}
+		if res["ok"] != float64(1) {
+			t.Fatalf("Handle(%#v) ok = %v, want 1", cmd, res["ok"])
+		}
+	}
+}
+
 func TestHandleAggregateMatchLimitAndCount(t *testing.T) {
 	h := New(memory.NewStore())
 	ctx := context.Background()
@@ -269,6 +363,48 @@ func TestHandleAggregateMatchLimitAndCount(t *testing.T) {
 	countBatch := count["cursor"].(bson.M)["firstBatch"].(bson.A)
 	if countBatch[0].(bson.M)["count"] != int64(2) {
 		t.Fatalf("count doc = %#v, want count 2", countBatch[0])
+	}
+}
+
+func TestHandleAggregateGroupCountAndSum(t *testing.T) {
+	h := New(memory.NewStore())
+	ctx := context.Background()
+
+	if _, err := h.Handle(ctx, bson.M{
+		"insert": "orders",
+		"$db":    "app",
+		"documents": bson.A{
+			bson.M{"_id": int32(1), "status": "paid", "total": int32(10)},
+			bson.M{"_id": int32(2), "status": "new", "total": int32(20)},
+			bson.M{"_id": int32(3), "status": "paid", "total": int32(30)},
+		},
+	}); err != nil {
+		t.Fatalf("insert returned error: %v", err)
+	}
+
+	res, err := h.Handle(ctx, bson.M{
+		"aggregate": "orders",
+		"$db":       "app",
+		"pipeline": bson.A{
+			bson.M{"$match": bson.M{"status": "paid"}},
+			bson.M{"$group": bson.M{
+				"_id":     "$status",
+				"count":   bson.M{"$sum": int32(1)},
+				"revenue": bson.M{"$sum": "$total"},
+			}},
+		},
+		"cursor": bson.M{},
+	})
+	if err != nil {
+		t.Fatalf("aggregate returned error: %v", err)
+	}
+	batch := res["cursor"].(bson.M)["firstBatch"].(bson.A)
+	if len(batch) != 1 {
+		t.Fatalf("len(firstBatch) = %d, want 1", len(batch))
+	}
+	doc := batch[0].(bson.M)
+	if doc["_id"] != "paid" || doc["count"] != float64(2) || doc["revenue"] != float64(40) {
+		t.Fatalf("group doc = %#v, want paid count 2 revenue 40", doc)
 	}
 }
 

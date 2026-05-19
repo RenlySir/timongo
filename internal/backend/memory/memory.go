@@ -1,10 +1,8 @@
 package memory
 
 import (
-	"sort"
 	"context"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
 
@@ -12,6 +10,7 @@ import (
 
 	"github.com/RenlySir/timongo/internal/backend"
 	"github.com/RenlySir/timongo/internal/bsonutil"
+	"github.com/RenlySir/timongo/internal/mql"
 )
 
 // Store is an in-memory backend implementation for tests.
@@ -87,9 +86,13 @@ func (s *Store) Insert(_ context.Context, db, collection string, docs []bson.M) 
 	defer s.mu.Unlock()
 
 	coll := s.collection(db, collection)
-	s.ensureDefaultIndex(namespace(db, collection))
+	ns := namespace(db, collection)
+	s.ensureDefaultIndex(ns)
 
 	for _, doc := range docs {
+		if err := mql.ValidateJSONSchema(s.options[ns]["validator"], doc); err != nil {
+			return backend.InsertResult{}, err
+		}
 		key, err := bsonutil.DocumentIDKey(doc)
 		if err != nil {
 			return backend.InsertResult{}, err
@@ -105,7 +108,7 @@ func (s *Store) Insert(_ context.Context, db, collection string, docs []bson.M) 
 	return backend.InsertResult{Inserted: len(docs)}, nil
 }
 
-// Find returns documents matching a small equality-only filter subset.
+// Find returns documents matching a practical MongoDB filter subset.
 func (s *Store) Find(_ context.Context, db, collection string, req backend.FindRequest) (backend.FindResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -115,20 +118,22 @@ func (s *Store) Find(_ context.Context, db, collection string, req backend.FindR
 		return backend.FindResult{}, nil
 	}
 
-	limit := req.Limit
-	res := make([]bson.M, 0)
+	matched := make([]bson.M, 0)
 
 	for _, doc := range coll {
-		if !matches(doc, req.Filter) {
+		if !mql.Matches(doc, req.Filter) {
 			continue
 		}
 
-		res = append(res, cloneDoc(doc))
-		if limit > 0 && int64(len(res)) >= limit {
-			break
-		}
+		matched = append(matched, mql.CloneDoc(doc))
 	}
 
+	res := mql.ApplyFindOptions(matched, mql.FindOptions{
+		Projection: req.Projection,
+		Sort:       req.Sort,
+		Skip:       req.Skip,
+		Limit:      req.Limit,
+	})
 	return backend.FindResult{Documents: res}, nil
 }
 
@@ -173,13 +178,13 @@ func (s *Store) Update(_ context.Context, db, collection string, req backend.Upd
 	for _, update := range req.Updates {
 		matchedForOp := int64(0)
 		for key, doc := range coll {
-			if !matches(doc, update.Filter) {
+			if !mql.Matches(doc, update.Filter) {
 				continue
 			}
 			matchedForOp++
 			result.Matched++
-			next := cloneDoc(doc)
-			if err := applyUpdate(next, update.Update); err != nil {
+			next := mql.CloneDoc(doc)
+			if err := mql.ApplyUpdate(next, update.Update); err != nil {
 				return backend.UpdateResult{}, err
 			}
 			coll[key] = next
@@ -189,8 +194,8 @@ func (s *Store) Update(_ context.Context, db, collection string, req backend.Upd
 			}
 		}
 		if matchedForOp == 0 && update.Upsert {
-			doc := cloneDoc(update.Filter)
-			if err := applyUpdate(doc, update.Update); err != nil {
+			doc := mql.CloneDoc(update.Filter)
+			if err := mql.ApplyUpdate(doc, update.Update); err != nil {
 				return backend.UpdateResult{}, err
 			}
 			if _, ok := doc["_id"]; !ok {
@@ -218,7 +223,7 @@ func (s *Store) Delete(_ context.Context, db, collection string, req backend.Del
 	var deleted int64
 	for _, del := range req.Deletes {
 		for key, doc := range coll {
-			if !matches(doc, del.Filter) {
+			if !mql.Matches(doc, del.Filter) {
 				continue
 			}
 			delete(coll, key)
@@ -237,7 +242,7 @@ func (s *Store) Aggregate(ctx context.Context, db, collection string, req backen
 	if err != nil {
 		return backend.AggregateResult{}, err
 	}
-	docs, err := applyPipeline(find.Documents, req.Pipeline)
+	docs, err := mql.ApplyPipeline(find.Documents, req.Pipeline)
 	if err != nil {
 		return backend.AggregateResult{}, err
 	}
@@ -278,7 +283,7 @@ func (s *Store) ListIndexes(_ context.Context, db, collection string) (backend.L
 	ns := namespace(db, collection)
 	indexes := make([]bson.M, 0, len(s.indexes[ns]))
 	for _, idx := range s.indexes[ns] {
-		indexes = append(indexes, cloneDoc(idx))
+		indexes = append(indexes, mql.CloneDoc(idx))
 	}
 	return backend.ListIndexesResult{Indexes: indexes}, nil
 }
@@ -319,178 +324,6 @@ func (s *Store) ensureDefaultIndex(ns string) {
 
 func namespace(db, collection string) string {
 	return db + "." + collection
-}
-
-func matches(doc bson.M, filter bson.M) bool {
-	for k, want := range filter {
-		got, ok := doc[k]
-		if !ok {
-			return false
-		}
-
-		if !reflect.DeepEqual(got, want) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func applyUpdate(doc bson.M, update bson.M) error {
-	if len(update) == 0 {
-		return nil
-	}
-	operatorStyle := false
-	for key := range update {
-		if len(key) > 0 && key[0] == '$' {
-			operatorStyle = true
-			break
-		}
-	}
-	if !operatorStyle {
-		for key := range doc {
-			delete(doc, key)
-		}
-		for key, value := range update {
-			doc[key] = value
-		}
-		return nil
-	}
-	for op, raw := range update {
-		body, _ := raw.(bson.M)
-		switch op {
-		case "$set":
-			for key, value := range body {
-				doc[key] = value
-			}
-		case "$inc":
-			for key, value := range body {
-				doc[key] = addNumbers(doc[key], value)
-			}
-		case "$unset":
-			for key := range body {
-				delete(doc, key)
-			}
-		default:
-			return fmt.Errorf("unsupported update operator %s", op)
-		}
-	}
-	return nil
-}
-
-func addNumbers(left any, right any) any {
-	switch l := left.(type) {
-	case int32:
-		return l + toInt32(right)
-	case int64:
-		return l + int64(toInt32(right))
-	case int:
-		return l + int(toInt32(right))
-	case float64:
-		return l + float64(toInt32(right))
-	default:
-		return toInt32(right)
-	}
-}
-
-func toInt32(v any) int32 {
-	switch n := v.(type) {
-	case int32:
-		return n
-	case int64:
-		return int32(n)
-	case int:
-		return int32(n)
-	case float64:
-		return int32(n)
-	default:
-		return 0
-	}
-}
-
-func applyPipeline(input []bson.M, pipeline bson.A) ([]bson.M, error) {
-	docs := make([]bson.M, 0, len(input))
-	for _, doc := range input {
-		docs = append(docs, cloneDoc(doc))
-	}
-	for _, rawStage := range pipeline {
-		stage, ok := rawStage.(bson.M)
-		if !ok {
-			return nil, fmt.Errorf("aggregation stage has invalid type %T", rawStage)
-		}
-		for op, raw := range stage {
-			switch op {
-			case "$match":
-				filter, _ := raw.(bson.M)
-				filtered := docs[:0]
-				for _, doc := range docs {
-					if matches(doc, filter) {
-						filtered = append(filtered, doc)
-					}
-				}
-				docs = filtered
-			case "$limit":
-				n := int(toInt32(raw))
-				if n < len(docs) {
-					docs = docs[:n]
-				}
-			case "$skip":
-				n := int(toInt32(raw))
-				if n >= len(docs) {
-					docs = nil
-				} else {
-					docs = docs[n:]
-				}
-			case "$sort":
-				spec, _ := raw.(bson.M)
-				for field, dir := range spec {
-					desc := toInt32(dir) < 0
-					sort.SliceStable(docs, func(i, j int) bool {
-						less := fmt.Sprint(docs[i][field]) < fmt.Sprint(docs[j][field])
-						if desc {
-							return !less
-						}
-						return less
-					})
-					break
-				}
-			case "$project":
-				spec, _ := raw.(bson.M)
-				projected := make([]bson.M, 0, len(docs))
-				for _, doc := range docs {
-					next := bson.M{}
-					includeID := true
-					for field, include := range spec {
-						if field == "_id" && toInt32(include) == 0 {
-							includeID = false
-							continue
-						}
-						if toInt32(include) != 0 {
-							if value, ok := doc[field]; ok {
-								next[field] = value
-							}
-						}
-					}
-					if includeID {
-						if value, ok := doc["_id"]; ok {
-							next["_id"] = value
-						}
-					}
-					projected = append(projected, next)
-				}
-				docs = projected
-			case "$count":
-				name, _ := raw.(string)
-				if name == "" {
-					name = "count"
-				}
-				docs = []bson.M{{name: int64(len(docs))}}
-			default:
-				return nil, fmt.Errorf("unsupported aggregation stage %s", op)
-			}
-		}
-	}
-	return docs, nil
 }
 
 func cloneDoc(doc bson.M) bson.M {
