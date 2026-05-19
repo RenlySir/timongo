@@ -6,6 +6,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"github.com/RenlySir/timongo/internal/backend"
+	"github.com/RenlySir/timongo/internal/command"
 	"github.com/RenlySir/timongo/internal/mongoerrors"
 )
 
@@ -21,7 +22,7 @@ func New(store backend.Store) *Handler {
 
 // Handle processes one BSON command document.
 func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
-	name, value, err := commandName(cmd)
+	name, value, err := command.Name(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -136,24 +137,6 @@ func (h *Handler) find(ctx context.Context, cmd bson.M, coll string) (bson.M, er
 			"firstBatch": firstBatch,
 		},
 	}, nil
-}
-
-func commandName(cmd bson.M) (string, any, error) {
-	for _, k := range []string{
-		"hello",
-		"isMaster",
-		"ismaster",
-		"ping",
-		"buildInfo",
-		"insert",
-		"find",
-	} {
-		if v, ok := cmd[k]; ok {
-			return k, v, nil
-		}
-	}
-
-	return "", nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "empty command")
 }
 
 func requiredString(cmd bson.M, key string) (string, error) {
