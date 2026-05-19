@@ -37,7 +37,8 @@ func serve(args []string) error {
 
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "MongoDB wire protocol listen address")
-	fs.StringVar(&cfg.Backend, "backend", cfg.Backend, "storage backend: memory or tidb")
+	fs.StringVar(&cfg.StatusAddr, "status-listen", cfg.StatusAddr, "HTTP health and metrics listen address")
+	fs.StringVar(&cfg.Backend, "backend", cfg.Backend, "storage backend: tidb")
 	fs.StringVar(&cfg.TiDBDSN, "tidb-dsn", cfg.TiDBDSN, "TiDB/MySQL DSN, for example user:pass@tcp(127.0.0.1:4000)/timongo?parseTime=true")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -63,9 +64,7 @@ func serve(args []string) error {
 
 func buildStore(cfg config.Config) (storage.Store, func(), error) {
 	switch cfg.Backend {
-	case "memory":
-		return storage.NewMemoryStore(), func() {}, nil
-	case "tidb":
+	case config.BackendTiDB:
 		if cfg.TiDBDSN == "" {
 			return nil, nil, fmt.Errorf("-tidb-dsn is required when -backend=tidb")
 		}
@@ -74,6 +73,8 @@ func buildStore(cfg config.Config) (storage.Store, func(), error) {
 			return nil, nil, err
 		}
 		return store, func() { _ = store.Close() }, nil
+	case "memory":
+		return nil, nil, fmt.Errorf("memory backend is test-only; timongo runtime must be stateless and use tidb")
 	default:
 		return nil, nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
 	}
