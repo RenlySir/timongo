@@ -1,0 +1,12 @@
+services:
+  mongodb60:
+    image: mongo:6.0
+    ports:
+      - "37017:27017"
+
+  tidb:
+    image: pingcap/tidb:latest
+    command:
+      - --store=unistore
+    ports:
+      - "34000:4000"
