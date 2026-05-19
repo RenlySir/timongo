@@ -1,22 +1,26 @@
-package storage
+package tidb
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/RenlySir/timongo/internal/backend"
+)
 
 func TestPhysicalTableNameIsStableAndSanitized(t *testing.T) {
 	got := PhysicalTableName("app-db", "users.events")
-	want := "tm_app_db_users_events"
+	want := "tm_doc_app_db_users_events"
 	if got != want {
 		t.Fatalf("PhysicalTableName() = %q, want %q", got, want)
 	}
 }
 
 func TestFindSQLUsesIDKeyForIDFilter(t *testing.T) {
-	sql, args, err := BuildFindSQL("app", "users", FindRequest{Filter: mapOf("_id", int32(1)), Limit: 10})
+	sql, args, err := BuildFindSQL("app", "users", backend.FindRequest{Filter: mapOf("_id", int32(1)), Limit: 10})
 	if err != nil {
 		t.Fatalf("BuildFindSQL returned error: %v", err)
 	}
 
-	wantSQL := "SELECT doc FROM `tm_app_users` WHERE `_id_key` = ? LIMIT ?"
+	wantSQL := "SELECT JSON_PRETTY(doc_json) FROM `tm_doc_app_users` WHERE `id_key` = ? LIMIT ?"
 	if sql != wantSQL {
 		t.Fatalf("sql = %q, want %q", sql, wantSQL)
 	}
@@ -33,12 +37,12 @@ func TestFindSQLUsesIDKeyForIDFilter(t *testing.T) {
 }
 
 func TestFindSQLUsesJSONExtractForScalarFilter(t *testing.T) {
-	sql, args, err := BuildFindSQL("app", "users", FindRequest{Filter: mapOf("name", "Ada")})
+	sql, args, err := BuildFindSQL("app", "users", backend.FindRequest{Filter: mapOf("name", "Ada")})
 	if err != nil {
 		t.Fatalf("BuildFindSQL returned error: %v", err)
 	}
 
-	wantSQL := "SELECT doc FROM `tm_app_users` WHERE JSON_UNQUOTE(JSON_EXTRACT(doc, ?)) = ?"
+	wantSQL := "SELECT JSON_PRETTY(doc_json) FROM `tm_doc_app_users` WHERE JSON_UNQUOTE(JSON_EXTRACT(doc_json, ?)) = ?"
 	if sql != wantSQL {
 		t.Fatalf("sql = %q, want %q", sql, wantSQL)
 	}

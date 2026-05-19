@@ -9,9 +9,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/RenlySir/timongo/internal/backend"
+	tidbbackend "github.com/RenlySir/timongo/internal/backend/tidb"
 	"github.com/RenlySir/timongo/internal/config"
 	"github.com/RenlySir/timongo/internal/handler"
-	"github.com/RenlySir/timongo/internal/storage"
 	wireserver "github.com/RenlySir/timongo/internal/wire"
 )
 
@@ -62,13 +63,13 @@ func serve(args []string) error {
 	return server.ListenAndServe(ctx)
 }
 
-func buildStore(cfg config.Config) (storage.Store, func(), error) {
+func buildStore(cfg config.Config) (backend.Store, func(), error) {
 	switch cfg.Backend {
 	case config.BackendTiDB:
 		if cfg.TiDBDSN == "" {
 			return nil, nil, fmt.Errorf("-tidb-dsn is required when -backend=tidb")
 		}
-		store, err := storage.NewTiDBStore(cfg.TiDBDSN)
+		store, err := tidbbackend.NewStore(cfg.TiDBDSN)
 		if err != nil {
 			return nil, nil, err
 		}
