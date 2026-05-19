@@ -13,6 +13,7 @@ import (
 	tidbbackend "github.com/RenlySir/timongo/internal/backend/tidb"
 	"github.com/RenlySir/timongo/internal/config"
 	"github.com/RenlySir/timongo/internal/handler"
+	"github.com/RenlySir/timongo/internal/status"
 	wireserver "github.com/RenlySir/timongo/internal/wire"
 )
 
@@ -53,6 +54,16 @@ func serve(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	ready := func() error { return nil }
+	if r, ok := store.(interface{ Ready() error }); ok {
+		ready = r.Ready
+	}
+	go func() {
+		if err := status.ListenAndServe(ctx, cfg.StatusAddr, status.NewHandler(ready)); err != nil {
+			log.Printf("status server stopped: %v", err)
+		}
+	}()
 
 	server := &wireserver.Server{
 		Addr:    cfg.ListenAddr,

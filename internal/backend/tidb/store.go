@@ -41,6 +41,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// Ready reports whether the bound TiDB connection is reachable.
+func (s *Store) Ready() error {
+	return s.db.Ping()
+}
+
 // Insert stores documents in a per-collection table.
 func (s *Store) Insert(ctx context.Context, dbName, collection string, docs []bson.M) (backend.InsertResult, error) {
 	table := PhysicalTableName(dbName, collection)
