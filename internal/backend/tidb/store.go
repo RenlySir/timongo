@@ -10,6 +10,7 @@ import (
 
 	"github.com/RenlySir/timongo/internal/backend"
 	"github.com/RenlySir/timongo/internal/bsonutil"
+	"github.com/RenlySir/timongo/internal/catalog"
 )
 
 // Store stores documents in TiDB/MySQL-compatible tables.
@@ -21,6 +22,14 @@ type Store struct {
 func NewStore(dsn string) (*Store, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := catalog.Bootstrap(context.Background(), db); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 
