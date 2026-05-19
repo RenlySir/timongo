@@ -5,17 +5,17 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
+	"github.com/RenlySir/timongo/internal/backend"
 	"github.com/RenlySir/timongo/internal/mongoerrors"
-	"github.com/RenlySir/timongo/internal/storage"
 )
 
 // Handler dispatches MongoDB commands to a backend store.
 type Handler struct {
-	store storage.Store
+	store backend.Store
 }
 
 // New creates a Handler.
-func New(store storage.Store) *Handler {
+func New(store backend.Store) *Handler {
 	return &Handler{store: store}
 }
 
@@ -118,7 +118,7 @@ func (h *Handler) find(ctx context.Context, cmd bson.M, coll string) (bson.M, er
 		return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "limit has invalid type %T", raw)
 	}
 
-	res, err := h.store.Find(ctx, db, coll, storage.FindRequest{Filter: filter, Limit: limit})
+	res, err := h.store.Find(ctx, db, coll, backend.FindRequest{Filter: filter, Limit: limit})
 	if err != nil {
 		return nil, err
 	}

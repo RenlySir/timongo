@@ -1,4 +1,4 @@
-package storage
+package memory
 
 import (
 	"context"
@@ -8,24 +8,25 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
+	"github.com/RenlySir/timongo/internal/backend"
 	"github.com/RenlySir/timongo/internal/bsonutil"
 )
 
-// MemoryStore is an in-memory Store implementation for tests and local demos.
-type MemoryStore struct {
+// Store is an in-memory backend implementation for tests.
+type Store struct {
 	mu          sync.RWMutex
 	collections map[string]map[string]bson.M
 }
 
-// NewMemoryStore creates an empty in-memory store.
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
+// NewStore creates an empty in-memory store.
+func NewStore() *Store {
+	return &Store{
 		collections: make(map[string]map[string]bson.M),
 	}
 }
 
 // Insert stores documents in memory.
-func (s *MemoryStore) Insert(_ context.Context, db, collection string, docs []bson.M) (InsertResult, error) {
+func (s *Store) Insert(_ context.Context, db, collection string, docs []bson.M) (backend.InsertResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -34,27 +35,27 @@ func (s *MemoryStore) Insert(_ context.Context, db, collection string, docs []bs
 	for _, doc := range docs {
 		key, err := bsonutil.DocumentIDKey(doc)
 		if err != nil {
-			return InsertResult{}, err
+			return backend.InsertResult{}, err
 		}
 
 		if _, ok := coll[key]; ok {
-			return InsertResult{}, fmt.Errorf("duplicate key: %s", key)
+			return backend.InsertResult{}, fmt.Errorf("duplicate key: %s", key)
 		}
 
 		coll[key] = cloneDoc(doc)
 	}
 
-	return InsertResult{Inserted: len(docs)}, nil
+	return backend.InsertResult{Inserted: len(docs)}, nil
 }
 
 // Find returns documents matching a small equality-only filter subset.
-func (s *MemoryStore) Find(_ context.Context, db, collection string, req FindRequest) (FindResult, error) {
+func (s *Store) Find(_ context.Context, db, collection string, req backend.FindRequest) (backend.FindResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	coll := s.collections[namespace(db, collection)]
 	if coll == nil {
-		return FindResult{}, nil
+		return backend.FindResult{}, nil
 	}
 
 	limit := req.Limit
@@ -71,10 +72,10 @@ func (s *MemoryStore) Find(_ context.Context, db, collection string, req FindReq
 		}
 	}
 
-	return FindResult{Documents: res}, nil
+	return backend.FindResult{Documents: res}, nil
 }
 
-func (s *MemoryStore) collection(db, collection string) map[string]bson.M {
+func (s *Store) collection(db, collection string) map[string]bson.M {
 	ns := namespace(db, collection)
 	coll := s.collections[ns]
 	if coll == nil {

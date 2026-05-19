@@ -6,11 +6,11 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/RenlySir/timongo/internal/storage"
+	"github.com/RenlySir/timongo/internal/backend/memory"
 )
 
 func TestHandleHello(t *testing.T) {
-	h := New(storage.NewMemoryStore())
+	h := New(memory.NewStore())
 
 	res, err := h.Handle(context.Background(), bson.M{"hello": 1})
 	if err != nil {
@@ -26,7 +26,7 @@ func TestHandleHello(t *testing.T) {
 }
 
 func TestHandleInsertAndFind(t *testing.T) {
-	h := New(storage.NewMemoryStore())
+	h := New(memory.NewStore())
 	ctx := context.Background()
 
 	insertRes, err := h.Handle(ctx, bson.M{
@@ -67,7 +67,7 @@ func TestHandleInsertAndFind(t *testing.T) {
 }
 
 func TestHandleUnknownCommandReturnsCommandError(t *testing.T) {
-	h := New(storage.NewMemoryStore())
+	h := New(memory.NewStore())
 
 	_, err := h.Handle(context.Background(), bson.M{"dropDatabase": 1})
 	if err == nil {

@@ -1,15 +1,17 @@
-package storage
+package memory
 
 import (
 	"context"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+
+	"github.com/RenlySir/timongo/internal/backend"
 )
 
 func TestMemoryStoreInsertAndFindByID(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemoryStore()
+	store := NewStore()
 
 	doc := bson.M{"_id": int32(1), "name": "Ada", "age": int32(20)}
 	res, err := store.Insert(ctx, "app", "users", []bson.M{doc})
@@ -20,7 +22,7 @@ func TestMemoryStoreInsertAndFindByID(t *testing.T) {
 		t.Fatalf("Inserted = %d, want 1", res.Inserted)
 	}
 
-	got, err := store.Find(ctx, "app", "users", FindRequest{Filter: bson.M{"_id": int32(1)}})
+	got, err := store.Find(ctx, "app", "users", backend.FindRequest{Filter: bson.M{"_id": int32(1)}})
 	if err != nil {
 		t.Fatalf("Find returned error: %v", err)
 	}
@@ -34,7 +36,7 @@ func TestMemoryStoreInsertAndFindByID(t *testing.T) {
 
 func TestMemoryStoreFindByScalarEquality(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemoryStore()
+	store := NewStore()
 
 	_, err := store.Insert(ctx, "app", "users", []bson.M{
 		{"_id": int32(1), "name": "Ada", "age": int32(20)},
@@ -44,7 +46,7 @@ func TestMemoryStoreFindByScalarEquality(t *testing.T) {
 		t.Fatalf("Insert returned error: %v", err)
 	}
 
-	got, err := store.Find(ctx, "app", "users", FindRequest{Filter: bson.M{"name": "Grace"}})
+	got, err := store.Find(ctx, "app", "users", backend.FindRequest{Filter: bson.M{"name": "Grace"}})
 	if err != nil {
 		t.Fatalf("Find returned error: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestMemoryStoreFindByScalarEquality(t *testing.T) {
 
 func TestMemoryStoreRejectsDuplicateID(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemoryStore()
+	store := NewStore()
 
 	doc := bson.M{"_id": "same", "name": "Ada"}
 	if _, err := store.Insert(ctx, "app", "users", []bson.M{doc}); err != nil {

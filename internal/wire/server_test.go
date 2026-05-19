@@ -10,12 +10,12 @@ import (
 	"github.com/FerretDB/wire/wirebson"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
+	"github.com/RenlySir/timongo/internal/backend/memory"
 	"github.com/RenlySir/timongo/internal/handler"
-	"github.com/RenlySir/timongo/internal/storage"
 )
 
 func TestHandleOpMsgPing(t *testing.T) {
-	h := handler.New(storage.NewMemoryStore())
+	h := handler.New(memory.NewStore())
 	req := ferretwire.MustOpMsg("ping", int32(1), "$db", "admin")
 
 	resp, err := HandleOpMsg(context.Background(), h, req)
@@ -33,7 +33,7 @@ func TestHandleOpMsgPing(t *testing.T) {
 }
 
 func TestHandleOpQueryHello(t *testing.T) {
-	h := handler.New(storage.NewMemoryStore())
+	h := handler.New(memory.NewStore())
 	req := ferretwire.MustOpQuery("isMaster", int32(1), "$db", "admin")
 
 	resp, err := HandleOpQuery(context.Background(), h, req)
@@ -100,7 +100,7 @@ func TestWireDocumentRoundTripWithArray(t *testing.T) {
 }
 
 func TestHandleOpMsgInsertWithDocumentSequence(t *testing.T) {
-	h := handler.New(storage.NewMemoryStore())
+	h := handler.New(memory.NewStore())
 	req := ferretwire.MustOpMsg("insert", "users", "$db", "app", "documents", wirebson.MustArray(
 		wirebson.MustDocument("_id", int32(1), "name", "Ada"),
 	))
