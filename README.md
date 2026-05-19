@@ -1,6 +1,27 @@
 # timongo
 
-MongoDB, TiDB ecosystem, and FerretDB source-study notes.
+timongo targets a stateless MongoDB 6.0-compatible gateway for TiDB.
+
+## Enterprise Direction
+
+The enterprise architecture is documented in:
+
+- [timongo Enterprise Design](docs/superpowers/specs/2026-05-19-timongo-enterprise-design.md)
+- [timongo Enterprise M0 Plan](docs/superpowers/plans/2026-05-19-timongo-enterprise-m0.md)
+
+Current code is M0 architecture foundation work. It is not a full MongoDB replacement.
+
+Runtime principles:
+
+- `timongo serve` uses TiDB as the durable backend.
+- memory storage is test-only.
+- every timongo-server is configured to connect to one tidb-server.
+- MongoDB client entry load balancing is done by HAProxy, cloud NLB, or another TCP load balancer.
+- TiProxy remains a TiDB SQL-layer component and does not proxy MongoDB wire protocol.
+
+## Source Study Notes
+
+This repository also contains MongoDB, TiDB ecosystem, and FerretDB source-study notes.
 
 This repository summarizes a staged learning plan for several database systems and MongoDB-compatible implementations:
 
@@ -13,6 +34,7 @@ Start here:
 - [Database Source Study Summary](docs/database-source-study-summary.md)
 - [timongo Feasibility Assessment](docs/timongo-feasibility-report.md)
 - [timongo Product Design](docs/timongo-product-design.md)
+- [MongoDB 6.0 Compatibility Matrix](docs/compatibility/mongodb-6.0-matrix.md)
 
 ## Study Focus
 
@@ -48,9 +70,9 @@ Examples:
 - `tiup playground`
 - FerretDB `find` through PostgreSQL DocumentDB extension
 
-## MVP Implementation
+## M0 Implementation
 
-This repository now includes an early Go MVP for `timongo`: a MongoDB wire protocol gateway that can handle a small command subset and store documents through either an in-memory backend or a TiDB/MySQL-compatible backend.
+This repository includes an early Go M0 implementation for `timongo`: a MongoDB wire protocol gateway foundation that handles a small command subset and stores runtime data through a TiDB/MySQL-compatible backend.
 
 Supported commands in the current MVP:
 
@@ -64,7 +86,7 @@ Current limits:
 
 - no authentication
 - no update/delete/aggregate yet
-- no TiUP component packaging yet
+- TiUP topology support is a foundation scaffold, not a complete TiUP Cluster component yet
 - no full MongoDB compatibility
 - `find` supports empty filters, `_id` equality, and simple scalar equality
 
@@ -74,19 +96,14 @@ Build:
 go build ./cmd/timongo
 ```
 
-Run with in-memory backend:
-
-```bash
-go run ./cmd/timongo serve -listen 127.0.0.1:27017 -backend memory
-```
-
 Run with TiDB backend:
 
 ```bash
 go run ./cmd/timongo serve \
   -listen 127.0.0.1:27017 \
+  -status-listen 127.0.0.1:28017 \
   -backend tidb \
-  -tidb-dsn 'root:@tcp(127.0.0.1:4000)/timongo?parseTime=true'
+  -tidb-dsn 'root@tcp(127.0.0.1:4000)/test?parseTime=true'
 ```
 
 Basic smoke test:
