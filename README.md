@@ -11,6 +11,8 @@ This repository summarizes a staged learning plan for several database systems a
 Start here:
 
 - [Database Source Study Summary](docs/database-source-study-summary.md)
+- [timongo Feasibility Assessment](docs/timongo-feasibility-report.md)
+- [timongo Product Design](docs/timongo-product-design.md)
 
 ## Study Focus
 
