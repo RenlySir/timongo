@@ -1,0 +1,53 @@
+package storage
+
+import "testing"
+
+func TestPhysicalTableNameIsStableAndSanitized(t *testing.T) {
+	got := PhysicalTableName("app-db", "users.events")
+	want := "tm_app_db_users_events"
+	if got != want {
+		t.Fatalf("PhysicalTableName() = %q, want %q", got, want)
+	}
+}
+
+func TestFindSQLUsesIDKeyForIDFilter(t *testing.T) {
+	sql, args, err := BuildFindSQL("app", "users", FindRequest{Filter: mapOf("_id", int32(1)), Limit: 10})
+	if err != nil {
+		t.Fatalf("BuildFindSQL returned error: %v", err)
+	}
+
+	wantSQL := "SELECT doc FROM `tm_app_users` WHERE `_id_key` = ? LIMIT ?"
+	if sql != wantSQL {
+		t.Fatalf("sql = %q, want %q", sql, wantSQL)
+	}
+
+	if len(args) != 2 {
+		t.Fatalf("len(args) = %d, want 2", len(args))
+	}
+	if args[0] != "int32:1" {
+		t.Fatalf("args[0] = %v, want int32:1", args[0])
+	}
+	if args[1] != int64(10) {
+		t.Fatalf("args[1] = %v, want 10", args[1])
+	}
+}
+
+func TestFindSQLUsesJSONExtractForScalarFilter(t *testing.T) {
+	sql, args, err := BuildFindSQL("app", "users", FindRequest{Filter: mapOf("name", "Ada")})
+	if err != nil {
+		t.Fatalf("BuildFindSQL returned error: %v", err)
+	}
+
+	wantSQL := "SELECT doc FROM `tm_app_users` WHERE JSON_UNQUOTE(JSON_EXTRACT(doc, ?)) = ?"
+	if sql != wantSQL {
+		t.Fatalf("sql = %q, want %q", sql, wantSQL)
+	}
+
+	if args[0] != "$.name" || args[1] != "Ada" {
+		t.Fatalf("args = %#v, want [$.name Ada]", args)
+	}
+}
+
+func mapOf(k string, v any) map[string]any {
+	return map[string]any{k: v}
+}

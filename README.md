@@ -47,3 +47,51 @@ Examples:
 - `ALTER TABLE ...`
 - `tiup playground`
 - FerretDB `find` through PostgreSQL DocumentDB extension
+
+## MVP Implementation
+
+This repository now includes an early Go MVP for `timongo`: a MongoDB wire protocol gateway that can handle a small command subset and store documents through either an in-memory backend or a TiDB/MySQL-compatible backend.
+
+Supported commands in the current MVP:
+
+- `hello` / `isMaster`
+- `ping`
+- `buildInfo`
+- `insert`
+- `find`
+
+Current limits:
+
+- no authentication
+- no update/delete/aggregate yet
+- no TiUP component packaging yet
+- no full MongoDB compatibility
+- `find` supports empty filters, `_id` equality, and simple scalar equality
+
+Build:
+
+```bash
+go build ./cmd/timongo
+```
+
+Run with in-memory backend:
+
+```bash
+go run ./cmd/timongo serve -listen 127.0.0.1:27017 -backend memory
+```
+
+Run with TiDB backend:
+
+```bash
+go run ./cmd/timongo serve \
+  -listen 127.0.0.1:27017 \
+  -backend tidb \
+  -tidb-dsn 'root:@tcp(127.0.0.1:4000)/timongo?parseTime=true'
+```
+
+Basic smoke test:
+
+```javascript
+db.users.insertOne({_id: 1, name: "Ada"})
+db.users.find({_id: 1})
+```
