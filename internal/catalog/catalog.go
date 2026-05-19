@@ -10,7 +10,7 @@ func BootstrapStatements() []string {
 	return []string{
 		"CREATE DATABASE IF NOT EXISTS `_timongo`",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`databases` (`name` VARBINARY(256) NOT NULL PRIMARY KEY, `created_at` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6))",
-		"CREATE TABLE IF NOT EXISTS `_timongo`.`collections` (`id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, `database_name` VARBINARY(256) NOT NULL, `collection_name` VARBINARY(256) NOT NULL, `physical_table` VARCHAR(256) NOT NULL, `schema_version` BIGINT NOT NULL DEFAULT 1, UNIQUE KEY `uk_namespace` (`database_name`, `collection_name`))",
+		"CREATE TABLE IF NOT EXISTS `_timongo`.`collections` (`id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, `database_name` VARBINARY(256) NOT NULL, `collection_name` VARBINARY(256) NOT NULL, `physical_table` VARCHAR(256) NOT NULL, `options_json` JSON NOT NULL, `schema_version` BIGINT NOT NULL DEFAULT 1, UNIQUE KEY `uk_namespace` (`database_name`, `collection_name`))",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`indexes` (`id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, `collection_id` BIGINT NOT NULL, `name` VARCHAR(128) NOT NULL, `definition_json` JSON NOT NULL, `state` VARCHAR(32) NOT NULL, UNIQUE KEY `uk_collection_index` (`collection_id`, `name`))",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`users` (`user_name` VARBINARY(256) NOT NULL, `database_name` VARBINARY(256) NOT NULL, `credentials_json` JSON NOT NULL, `roles_json` JSON NOT NULL, PRIMARY KEY (`user_name`, `database_name`))",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`roles` (`role_name` VARBINARY(256) NOT NULL, `database_name` VARBINARY(256) NOT NULL, `privileges_json` JSON NOT NULL, PRIMARY KEY (`role_name`, `database_name`))",

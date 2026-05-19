@@ -11,6 +11,7 @@ func TestBootstrapStatementsContainRequiredSystemTables(t *testing.T) {
 		"CREATE DATABASE IF NOT EXISTS `_timongo`",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`databases`",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`collections`",
+		"`options_json` JSON NOT NULL",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`indexes`",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`sessions`",
 		"CREATE TABLE IF NOT EXISTS `_timongo`.`retryable_writes`",

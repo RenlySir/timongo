@@ -8,8 +8,31 @@ import (
 
 // Store is the durable backend used by MongoDB command handlers.
 type Store interface {
+	CreateCollection(ctx context.Context, db, collection string, opts CreateCollectionOptions) error
+	ListCollections(ctx context.Context, db string, filter bson.M) (ListCollectionsResult, error)
+	DropCollection(ctx context.Context, db, collection string) error
 	Insert(ctx context.Context, db, collection string, docs []bson.M) (InsertResult, error)
 	Find(ctx context.Context, db, collection string, req FindRequest) (FindResult, error)
+	Count(ctx context.Context, db, collection string, req CountRequest) (CountResult, error)
+	CreateIndexes(ctx context.Context, db, collection string, indexes []IndexModel) (CreateIndexesResult, error)
+	ListIndexes(ctx context.Context, db, collection string) (ListIndexesResult, error)
+	DropDatabase(ctx context.Context, db string) error
+}
+
+// CreateCollectionOptions contains M0 collection metadata.
+type CreateCollectionOptions struct {
+	Validator bson.M
+}
+
+// CollectionInfo describes one collection.
+type CollectionInfo struct {
+	Name    string
+	Options bson.M
+}
+
+// ListCollectionsResult contains collection metadata.
+type ListCollectionsResult struct {
+	Collections []CollectionInfo
 }
 
 // InsertResult describes an insert command result.
@@ -26,4 +49,31 @@ type FindRequest struct {
 // FindResult describes a find command result.
 type FindResult struct {
 	Documents []bson.M
+}
+
+// CountRequest describes a count command.
+type CountRequest struct {
+	Filter bson.M
+}
+
+// CountResult describes a count command result.
+type CountResult struct {
+	Count int64
+}
+
+// IndexModel describes one MongoDB index definition.
+type IndexModel struct {
+	Name string
+	Key  bson.M
+	Opts bson.M
+}
+
+// CreateIndexesResult describes createIndexes output.
+type CreateIndexesResult struct {
+	Names []string
+}
+
+// ListIndexesResult describes listIndexes output.
+type ListIndexesResult struct {
+	Indexes []bson.M
 }

@@ -47,6 +47,43 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 			"version":    "0.1.0",
 			"gitVersion": "timongo-mvp",
 		}, nil
+	case "serverStatus":
+		return bson.M{"ok": float64(1), "version": "0.1.0", "timongo": bson.M{"compatVersion": "6.0"}}, nil
+	case "create":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "create must be a collection name")
+		}
+		return h.createCollection(ctx, cmd, coll)
+	case "listCollections":
+		return h.listCollections(ctx, cmd)
+	case "drop":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "drop must be a collection name")
+		}
+		return h.dropCollection(ctx, cmd, coll)
+	case "dropDatabase":
+		db, err := requiredString(cmd, "$db")
+		if err != nil {
+			return nil, err
+		}
+		if err := h.store.DropDatabase(ctx, db); err != nil {
+			return nil, err
+		}
+		return bson.M{"ok": float64(1), "dropped": db}, nil
+	case "createIndexes":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "createIndexes must be a collection name")
+		}
+		return h.createIndexes(ctx, cmd, coll)
+	case "listIndexes":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "listIndexes must be a collection name")
+		}
+		return h.listIndexes(ctx, cmd, coll)
 	case "insert":
 		coll, ok := value.(string)
 		if !ok || coll == "" {
@@ -59,9 +96,86 @@ func (h *Handler) Handle(ctx context.Context, cmd bson.M) (bson.M, error) {
 			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "find must be a collection name")
 		}
 		return h.find(ctx, cmd, coll)
+	case "count":
+		coll, ok := value.(string)
+		if !ok || coll == "" {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "count must be a collection name")
+		}
+		return h.count(ctx, cmd, coll)
+	case "listDatabases":
+		return bson.M{
+			"ok":        float64(1),
+			"databases": bson.A{},
+			"totalSize": int64(0),
+		}, nil
 	default:
 		return nil, mongoerrors.New(mongoerrors.CodeCommandNotFound, "CommandNotFound", "no such command: %s", name)
 	}
+}
+
+func (h *Handler) createCollection(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+
+	var validator bson.M
+	if raw, ok := cmd["validator"]; ok {
+		validator, ok = raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "validator has invalid type %T", raw)
+		}
+	}
+	if err := h.store.CreateCollection(ctx, db, coll, backend.CreateCollectionOptions{Validator: validator}); err != nil {
+		return nil, err
+	}
+	return bson.M{"ok": float64(1)}, nil
+}
+
+func (h *Handler) listCollections(ctx context.Context, cmd bson.M) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	filter := bson.M{}
+	if raw, ok := cmd["filter"]; ok {
+		filter, ok = raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "filter has invalid type %T", raw)
+		}
+	}
+	res, err := h.store.ListCollections(ctx, db, filter)
+	if err != nil {
+		return nil, err
+	}
+	batch := make(bson.A, 0, len(res.Collections))
+	for _, coll := range res.Collections {
+		batch = append(batch, bson.M{
+			"name":    coll.Name,
+			"type":    "collection",
+			"options": coll.Options,
+			"info":    bson.M{"readOnly": false},
+		})
+	}
+	return bson.M{
+		"ok": float64(1),
+		"cursor": bson.M{
+			"id":         int64(0),
+			"ns":         db + ".$cmd.listCollections",
+			"firstBatch": batch,
+		},
+	}, nil
+}
+
+func (h *Handler) dropCollection(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	if err := h.store.DropCollection(ctx, db, coll); err != nil {
+		return nil, err
+	}
+	return bson.M{"ok": float64(1), "ns": db + "." + coll}, nil
 }
 
 func (h *Handler) insert(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
@@ -135,6 +249,86 @@ func (h *Handler) find(ctx context.Context, cmd bson.M, coll string) (bson.M, er
 			"id":         int64(0),
 			"ns":         db + "." + coll,
 			"firstBatch": firstBatch,
+		},
+	}, nil
+}
+
+func (h *Handler) count(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	filter := bson.M{}
+	if raw, ok := cmd["query"]; ok {
+		filter, ok = raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "query has invalid type %T", raw)
+		}
+	}
+	res, err := h.store.Count(ctx, db, coll, backend.CountRequest{Filter: filter})
+	if err != nil {
+		return nil, err
+	}
+	return bson.M{"ok": float64(1), "n": res.Count}, nil
+}
+
+func (h *Handler) createIndexes(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	rawIndexes, ok := cmd["indexes"].(bson.A)
+	if !ok {
+		return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "indexes must be an array")
+	}
+	indexes := make([]backend.IndexModel, 0, len(rawIndexes))
+	for _, raw := range rawIndexes {
+		doc, ok := raw.(bson.M)
+		if !ok {
+			return nil, mongoerrors.New(mongoerrors.CodeBadValue, "BadValue", "index has invalid type %T", raw)
+		}
+		key, _ := doc["key"].(bson.M)
+		name, _ := doc["name"].(string)
+		opts := bson.M{}
+		for k, v := range doc {
+			if k == "name" || k == "key" {
+				continue
+			}
+			opts[k] = v
+		}
+		indexes = append(indexes, backend.IndexModel{Name: name, Key: key, Opts: opts})
+	}
+	res, err := h.store.CreateIndexes(ctx, db, coll, indexes)
+	if err != nil {
+		return nil, err
+	}
+	return bson.M{
+		"ok":                             float64(1),
+		"createdCollectionAutomatically": true,
+		"numIndexesBefore":               int32(1),
+		"numIndexesAfter":                int32(1 + len(res.Names)),
+	}, nil
+}
+
+func (h *Handler) listIndexes(ctx context.Context, cmd bson.M, coll string) (bson.M, error) {
+	db, err := requiredString(cmd, "$db")
+	if err != nil {
+		return nil, err
+	}
+	res, err := h.store.ListIndexes(ctx, db, coll)
+	if err != nil {
+		return nil, err
+	}
+	batch := make(bson.A, 0, len(res.Indexes))
+	for _, idx := range res.Indexes {
+		batch = append(batch, idx)
+	}
+	return bson.M{
+		"ok": float64(1),
+		"cursor": bson.M{
+			"id":         int64(0),
+			"ns":         db + "." + coll,
+			"firstBatch": batch,
 		},
 	}, nil
 }

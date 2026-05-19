@@ -55,8 +55,22 @@ var knownNames = []string{
 	"ismaster",
 	"ping",
 	"buildInfo",
+	"serverStatus",
+	"create",
+	"listCollections",
+	"createIndexes",
+	"listIndexes",
+	"drop",
+	"dropDatabase",
 	"insert",
 	"find",
+	"count",
+	"distinct",
+	"update",
+	"delete",
+	"findAndModify",
+	"aggregate",
+	"listDatabases",
 }
 
 // Name returns the MongoDB command name.

@@ -16,13 +16,67 @@ import (
 type Store struct {
 	mu          sync.RWMutex
 	collections map[string]map[string]bson.M
+	options     map[string]bson.M
+	indexes     map[string][]bson.M
 }
 
 // NewStore creates an empty in-memory store.
 func NewStore() *Store {
 	return &Store{
 		collections: make(map[string]map[string]bson.M),
+		options:     make(map[string]bson.M),
+		indexes:     make(map[string][]bson.M),
 	}
+}
+
+// CreateCollection creates collection metadata.
+func (s *Store) CreateCollection(_ context.Context, db, collection string, opts backend.CreateCollectionOptions) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ns := namespace(db, collection)
+	if s.collections[ns] == nil {
+		s.collections[ns] = make(map[string]bson.M)
+	}
+	options := bson.M{}
+	if len(opts.Validator) > 0 {
+		options["validator"] = opts.Validator
+	}
+	s.options[ns] = options
+	s.ensureDefaultIndex(ns)
+	return nil
+}
+
+// ListCollections returns collection metadata.
+func (s *Store) ListCollections(_ context.Context, db string, filter bson.M) (backend.ListCollectionsResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var collections []backend.CollectionInfo
+	prefix := db + "."
+	for ns := range s.collections {
+		if len(ns) < len(prefix) || ns[:len(prefix)] != prefix {
+			continue
+		}
+		name := ns[len(prefix):]
+		if filterName, ok := filter["name"].(string); ok && filterName != name {
+			continue
+		}
+		collections = append(collections, backend.CollectionInfo{Name: name, Options: cloneDoc(s.options[ns])})
+	}
+	return backend.ListCollectionsResult{Collections: collections}, nil
+}
+
+// DropCollection removes one collection.
+func (s *Store) DropCollection(_ context.Context, db, collection string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ns := namespace(db, collection)
+	delete(s.collections, ns)
+	delete(s.options, ns)
+	delete(s.indexes, ns)
+	return nil
 }
 
 // Insert stores documents in memory.
@@ -31,6 +85,7 @@ func (s *Store) Insert(_ context.Context, db, collection string, docs []bson.M) 
 	defer s.mu.Unlock()
 
 	coll := s.collection(db, collection)
+	s.ensureDefaultIndex(namespace(db, collection))
 
 	for _, doc := range docs {
 		key, err := bsonutil.DocumentIDKey(doc)
@@ -75,6 +130,70 @@ func (s *Store) Find(_ context.Context, db, collection string, req backend.FindR
 	return backend.FindResult{Documents: res}, nil
 }
 
+// Count returns the number of documents matching a filter.
+func (s *Store) Count(ctx context.Context, db, collection string, req backend.CountRequest) (backend.CountResult, error) {
+	res, err := s.Find(ctx, db, collection, backend.FindRequest{Filter: req.Filter})
+	if err != nil {
+		return backend.CountResult{}, err
+	}
+	return backend.CountResult{Count: int64(len(res.Documents))}, nil
+}
+
+// CreateIndexes stores index metadata.
+func (s *Store) CreateIndexes(_ context.Context, db, collection string, indexes []backend.IndexModel) (backend.CreateIndexesResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ns := namespace(db, collection)
+	if s.collections[ns] == nil {
+		s.collections[ns] = make(map[string]bson.M)
+	}
+	s.ensureDefaultIndex(ns)
+	names := make([]string, 0, len(indexes))
+	for _, idx := range indexes {
+		name := idx.Name
+		if name == "" {
+			name = indexName(idx.Key)
+		}
+		doc := bson.M{"name": name, "key": idx.Key}
+		for k, v := range idx.Opts {
+			doc[k] = v
+		}
+		s.indexes[ns] = append(s.indexes[ns], doc)
+		names = append(names, name)
+	}
+	return backend.CreateIndexesResult{Names: names}, nil
+}
+
+// ListIndexes returns index metadata.
+func (s *Store) ListIndexes(_ context.Context, db, collection string) (backend.ListIndexesResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ns := namespace(db, collection)
+	indexes := make([]bson.M, 0, len(s.indexes[ns]))
+	for _, idx := range s.indexes[ns] {
+		indexes = append(indexes, cloneDoc(idx))
+	}
+	return backend.ListIndexesResult{Indexes: indexes}, nil
+}
+
+// DropDatabase removes all in-memory collections for a database.
+func (s *Store) DropDatabase(_ context.Context, db string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	prefix := db + "."
+	for ns := range s.collections {
+		if len(ns) >= len(prefix) && ns[:len(prefix)] == prefix {
+			delete(s.collections, ns)
+			delete(s.options, ns)
+			delete(s.indexes, ns)
+		}
+	}
+	return nil
+}
+
 func (s *Store) collection(db, collection string) map[string]bson.M {
 	ns := namespace(db, collection)
 	coll := s.collections[ns]
@@ -82,8 +201,15 @@ func (s *Store) collection(db, collection string) map[string]bson.M {
 		coll = make(map[string]bson.M)
 		s.collections[ns] = coll
 	}
+	s.ensureDefaultIndex(ns)
 
 	return coll
+}
+
+func (s *Store) ensureDefaultIndex(ns string) {
+	if len(s.indexes[ns]) == 0 {
+		s.indexes[ns] = []bson.M{{"name": "_id_", "key": bson.M{"_id": int32(1)}}}
+	}
 }
 
 func namespace(db, collection string) string {
@@ -112,4 +238,14 @@ func cloneDoc(doc bson.M) bson.M {
 	}
 
 	return res
+}
+
+func indexName(key bson.M) string {
+	if len(key) == 0 {
+		return "unnamed_1"
+	}
+	for field, direction := range key {
+		return fmt.Sprintf("%s_%v", field, direction)
+	}
+	return "unnamed_1"
 }
